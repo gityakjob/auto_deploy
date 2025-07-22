@@ -22,7 +22,6 @@ DOCKERFILE_PATH="$REPO_DIR/Dockerfile"
 BUILD_COMMAND="${DOCKER} build -t ${DOCKER_IMAGE_NAME}"
 RUN_COMMAND="${DOCKER} push ${DOCKER_IMAGE_NAME}"
 RUN_TAG_IMAGE="${DOCKER} tag ${DOCKER_IMAGE_NAME}"
-AWS_REMOVE="aws ecr batch-delete-image --repository-name ${IMAGE_NAME}/${ID} --image-ids imageTag=latest"
 VERSION_FILE="${DIR_ROOT}/version_${ID}.txt"
 LOG_FILE="/tmp/git_docker_monitor_${ID}.log"
 TAG="latest"
@@ -102,8 +101,24 @@ build_and_run_docker() {
     # Make sure AWS CLI is configured with AWS credentials
     aws ecr get-login-password --region "${REGION}" | "${DOCKER}" login --username AWS --password-stdin "${ECR_URL}"
 
-    if ! $AWS_REMOVE ; then
-        log_message "ERROR: Image not removed in AWS ECR"
+    aws ecr batch-delete-image --repository-name www/${ID} --image-ids imageTag=latest
+    log_message "INFO: Imagen www/$ID removida en AWS ECR"
+    
+    # Get the imageDigest of the image that does NOT have the "latest" tag,
+    # ensuring that the image has the 'imageTags' field.
+    IMAGE_DIGEST_TO_DELETE=$(aws ecr describe-images \
+        --repository-name "www/$ID" \
+        --query 'imageDetails[?!imageTags].imageDigest' \
+        --output text)
+
+    if [ -n "$IMAGE_DIGEST_TO_DELETE" ]; then
+        log_message "INFO: Deleting image with digest: $IMAGE_DIGEST_TO_DELETE"
+        aws ecr batch-delete-image \
+            --repository-name "$REPO_NAME" \
+            --image-ids imageDigest="$IMAGE_DIGEST_TO_DELETE"
+        log_message "INFO: Image deleted successfully."
+    else
+        log_message "INFO: No image found without the 'latest' tag to delete."
     fi
 
     if ! $RUN_TAG_IMAGE:"$new_version" "$DOCKER_IMAGE_NAME":"$TAG" ; then
